@@ -1,0 +1,34 @@
+name: shimforge env mock
+
+on:
+  push:
+    branches: [test/shimforge-env-mock]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      # Hostile values for every name these tests used to set, to show the
+      # tests no longer depend on the process environment.
+      AEGIS_TEST_ENV_VAR_UNIQUE: "false"
+      AEGIS_TEST_ENV_VAR_ABSENT: "true"
+      AEGIS_TEST_ABSENT_EMPTY: ""
+      AEGIS_TEST_C3_RESIDUAL_WHEN: "nope"
+      # These tests need no sandbox binary; skip the vendored bubblewrap build.
+      AEGIS_SKIP_BWRAP_BUILD: "1"
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: No env mutation left in policy_rules.rs
+        run: |
+          ! grep -nE 'env::set_var|env::remove_var' src/planning/policy_rules.rs
+
+      - name: Tests, default parallelism, five runs
+        run: |
+          for i in 1 2 3 4 5; do
+            echo "--- run $i"
+            cargo test -p aegis --lib planning::policy_rules
+          done
