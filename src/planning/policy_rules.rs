@@ -75,6 +75,8 @@ mod tests {
     use aegis_types::Assessment;
     use aegis_types::PolicyRuleDecision;
     use aegis_types::{AllowlistOverrideLevel, CiPolicy, Mode, RiskLevel, SnapshotPolicy};
+    use shimforge::{Session, mock};
+    use std::env::VarError;
     use std::fs;
     use tempfile::TempDir;
 
@@ -126,8 +128,16 @@ mod tests {
 
     #[test]
     fn evaluate_policy_rules_when_clause_overrides_on_env_match() {
-        // SAFETY: test-only, single-threaded in this test context.
-        unsafe { std::env::set_var("AEGIS_TEST_ENV_VAR_UNIQUE", "true") };
+        // The rule's env var reads as "true" on this test's thread only; the
+        // process environment is untouched.
+        let mut shim = Session::new();
+        let var = mock!(
+            shim,
+            std::env::var::<&String>,
+            fn(&String) -> Result<String, VarError>
+        );
+        var.expect().returns(Ok("true".to_owned()));
+
         let rules = vec![PolicyRule {
             pattern: vec![single("rm")],
             decision: PolicyRuleDecision::Prompt,
@@ -144,14 +154,19 @@ mod tests {
         assert!(result.matched);
         // env matches → use `then` (Allow)
         assert_eq!(result.decision, Some(PolicyRuleDecision::Allow));
-        // SAFETY: test-only cleanup.
-        unsafe { std::env::remove_var("AEGIS_TEST_ENV_VAR_UNIQUE") };
     }
 
     #[test]
     fn evaluate_policy_rules_when_clause_uses_base_on_env_mismatch() {
-        // SAFETY: test-only, single-threaded in this test context.
-        unsafe { std::env::remove_var("AEGIS_TEST_ENV_VAR_ABSENT") };
+        // The rule's env var reads as absent on this test's thread only.
+        let mut shim = Session::new();
+        let var = mock!(
+            shim,
+            std::env::var::<&String>,
+            fn(&String) -> Result<String, VarError>
+        );
+        var.expect().returns(Err(VarError::NotPresent));
+
         let rules = vec![PolicyRule {
             pattern: vec![single("rm")],
             decision: PolicyRuleDecision::Prompt,
@@ -173,7 +188,14 @@ mod tests {
     #[test]
     fn evaluate_policy_rules_when_missing_env_empty_value_does_not_match() {
         // Ensure absent env var does NOT match value = "" via unwrap_or_default.
-        unsafe { std::env::remove_var("AEGIS_TEST_ABSENT_EMPTY") };
+        let mut shim = Session::new();
+        let var = mock!(
+            shim,
+            std::env::var::<&String>,
+            fn(&String) -> Result<String, VarError>
+        );
+        var.expect().returns(Err(VarError::NotPresent));
+
         let rules = vec![PolicyRule {
             pattern: vec![single("ls")],
             decision: PolicyRuleDecision::Block,
@@ -334,9 +356,16 @@ mod tests {
 
     #[test]
     fn project_rules_prompt_with_when_then_allow_does_not_autoapprove_danger_under_protect() {
-        // Unique env var so this test is deterministic regardless of the host.
-        // SAFETY: test-only, single-threaded in this test context.
-        unsafe { std::env::set_var("AEGIS_TEST_C3_RESIDUAL_WHEN", "match") };
+        // The `when` condition reads as matching on this test's thread, so the
+        // test is deterministic regardless of the host environment. If the rule
+        // is dropped at the merge, as it must be, this is never called.
+        let mut shim = Session::new();
+        let var = mock!(
+            shim,
+            std::env::var::<&String>,
+            fn(&String) -> Result<String, VarError>
+        );
+        var.expect().returns(Ok("match".to_owned()));
 
         let workspace = TempDir::new().unwrap();
         let home = TempDir::new().unwrap();
@@ -408,9 +437,6 @@ mod tests {
              got decision = {:?}",
             decision,
         );
-
-        // SAFETY: test-only cleanup.
-        unsafe { std::env::remove_var("AEGIS_TEST_C3_RESIDUAL_WHEN") };
     }
 
     #[test]
